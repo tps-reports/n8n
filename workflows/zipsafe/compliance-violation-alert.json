@@ -1,0 +1,210 @@
+{
+  "name": "ZipSafe: Compliance Violation Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "topics": "zipsafe/compliance/alert",
+        "options": {}
+      },
+      "id": "e1f2a3b4-c5d6-7890-efab-123456789014",
+      "name": "MQTT: Compliance Alert",
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = typeof $input.item.json.body === 'string'\n  ? JSON.parse($input.item.json.body)\n  : $input.item.json;\n\nif (!payload.violation_id) {\n  throw new Error('Missing required field: violation_id');\n}\n\nreturn [{\n  json: {\n    violation_id: payload.violation_id,\n    facility_id: payload.facility_id,\n    equipment_id: payload.equipment_id || null,\n    severity: payload.severity || 'unknown',\n    violation_type: payload.violation_type || 'unknown',\n    regulation_code: payload.regulation_code || '',\n    description: payload.description || '',\n    detected_at: payload.detected_at || new Date().toISOString(),\n    is_critical: payload.severity === 'critical'\n  }\n}];"
+      },
+      "id": "f2a3b4c5-d6e7-8901-fabc-234567890145",
+      "name": "Extract Violation Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-critical",
+              "leftValue": "={{ $json.severity }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "a3b4c5d6-e7f8-9012-abcd-345678901256",
+      "name": "Is Critical Severity?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  f.id AS facility_id,\n  f.name AS facility_name,\n  f.address AS facility_address,\n  fa.email AS admin_email,\n  fa.full_name AS admin_name,\n  fa.phone AS admin_phone\nFROM zipsafe.facilities f\nJOIN zipsafe.facility_admins fa ON fa.facility_id = f.id AND fa.is_primary = TRUE\nWHERE f.id = {{ $json.facility_id }}",
+        "options": {}
+      },
+      "id": "b4c5d6e7-f8a9-0123-bcde-456789012367",
+      "name": "Lookup Facility Admin",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No-op terminal node to cleanly end non-critical path\nreturn [{ json: { skipped: true, reason: 'Non-critical severity — no notification sent' } }];"
+      },
+      "id": "c5d6e7f8-a9b0-1234-cdef-567890123478",
+      "name": "Skip (Non-Critical)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 450]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-phone",
+              "leftValue": "={{ $json.admin_phone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "d6e7f8a9-b0c1-2345-defa-678901234589",
+      "name": "Admin Has Phone?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "To",
+              "value": "={{ $json.admin_phone }}"
+            },
+            {
+              "name": "From",
+              "value": "={{ $env.TWILIO_FROM_NUMBER }}"
+            },
+            {
+              "name": "Body",
+              "value": "=[ZipSafe CRITICAL VIOLATION] {{ $('Extract Violation Details').item.json.violation_type }} at {{ $json.facility_name }}. Regulation: {{ $('Extract Violation Details').item.json.regulation_code }}. Immediate action required: https://zipsafe.2h2.us"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e7f8a9b0-c1d2-3456-efab-789012345690",
+      "name": "SMS Facility Admin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 150]
+    },
+    {
+      "parameters": {
+        "toEmail": "={{ $('Lookup Facility Admin').item.json.admin_email }}",
+        "subject": "=[ZipSafe] CRITICAL COMPLIANCE VIOLATION — {{ $('Extract Violation Details').item.json.violation_type }} at {{ $('Lookup Facility Admin').item.json.facility_name }}",
+        "emailType": "text",
+        "text": "=Dear {{ $('Lookup Facility Admin').item.json.admin_name }},\n\nA CRITICAL compliance violation has been detected at your facility. Immediate action is required.\n\n--- VIOLATION DETAILS ---\nViolation ID:    {{ $('Extract Violation Details').item.json.violation_id }}\nType:            {{ $('Extract Violation Details').item.json.violation_type }}\nSeverity:        CRITICAL\nRegulation Code: {{ $('Extract Violation Details').item.json.regulation_code }}\nDetected At:     {{ $('Extract Violation Details').item.json.detected_at }}\n\n--- FACILITY ---\nFacility:        {{ $('Lookup Facility Admin').item.json.facility_name }}\nAddress:         {{ $('Lookup Facility Admin').item.json.facility_address }}\n\n--- DESCRIPTION ---\n{{ $('Extract Violation Details').item.json.description }}\n\nThis violation requires immediate corrective action. Failure to address critical violations may result in regulatory penalties, operational suspension, or legal liability.\n\nLog in to ZipSafe to initiate a corrective action plan:\nhttps://zipsafe.2h2.us\n\nZipSafe Platform",
+        "options": {}
+      },
+      "id": "f8a9b0c1-d2e3-4567-fabc-890123456701",
+      "name": "Email Facility Admin",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1500, 350]
+    },
+    {
+      "parameters": {
+        "toEmail": "={{ $env.ZIPSAFE_PLATFORM_ADMIN_EMAIL }}",
+        "subject": "=[ZipSafe] PLATFORM ALERT — Critical Violation at {{ $('Lookup Facility Admin').item.json.facility_name }}",
+        "emailType": "text",
+        "text": "=Platform Admin,\n\nA critical compliance violation has been detected and notifications have been sent to the facility administrator.\n\n--- VIOLATION DETAILS ---\nViolation ID:    {{ $('Extract Violation Details').item.json.violation_id }}\nType:            {{ $('Extract Violation Details').item.json.violation_type }}\nSeverity:        CRITICAL\nRegulation Code: {{ $('Extract Violation Details').item.json.regulation_code }}\nDetected At:     {{ $('Extract Violation Details').item.json.detected_at }}\n\n--- FACILITY ---\nFacility:        {{ $('Lookup Facility Admin').item.json.facility_name }}\nAddress:         {{ $('Lookup Facility Admin').item.json.facility_address }}\nAdmin:           {{ $('Lookup Facility Admin').item.json.admin_name }} <{{ $('Lookup Facility Admin').item.json.admin_email }}>\nAdmin Phone:     {{ $('Lookup Facility Admin').item.json.admin_phone || 'N/A' }}\n\n--- DESCRIPTION ---\n{{ $('Extract Violation Details').item.json.description }}\n\nThis alert is for your records. The facility admin has been notified via email{{ $('Lookup Facility Admin').item.json.admin_phone ? ' and SMS' : '' }}.\n\nZipSafe Platform",
+        "options": {}
+      },
+      "id": "a9b0c1d2-e3f4-5678-abcd-901234567812",
+      "name": "Email Platform Admin",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1750, 300]
+    }
+  ],
+  "connections": {
+    "MQTT: Compliance Alert": {
+      "main": [
+        [{ "node": "Extract Violation Details", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Violation Details": {
+      "main": [
+        [{ "node": "Is Critical Severity?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Critical Severity?": {
+      "main": [
+        [{ "node": "Lookup Facility Admin", "type": "main", "index": 0 }],
+        [{ "node": "Skip (Non-Critical)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Lookup Facility Admin": {
+      "main": [
+        [{ "node": "Admin Has Phone?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Admin Has Phone?": {
+      "main": [
+        [
+          { "node": "SMS Facility Admin", "type": "main", "index": 0 },
+          { "node": "Email Facility Admin", "type": "main", "index": 0 }
+        ],
+        [{ "node": "Email Facility Admin", "type": "main", "index": 0 }]
+      ]
+    },
+    "SMS Facility Admin": {
+      "main": [
+        [{ "node": "Email Platform Admin", "type": "main", "index": 0 }]
+      ]
+    },
+    "Email Facility Admin": {
+      "main": [
+        [{ "node": "Email Platform Admin", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "zipsafe" }]
+}

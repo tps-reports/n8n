@@ -1,0 +1,136 @@
+{
+  "name": "ZipSafe: Manufacturer 48-Hour Incident Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "topics": "zipsafe/incident/notification",
+        "options": {}
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "MQTT: Incident Notification",
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = typeof $input.item.json.body === 'string'\n  ? JSON.parse($input.item.json.body)\n  : $input.item.json;\n\nif (!payload.incident_id || !payload.equipment_id) {\n  throw new Error('Missing required fields: incident_id or equipment_id');\n}\n\nreturn [{\n  json: {\n    incident_id: payload.incident_id,\n    equipment_id: payload.equipment_id,\n    incident_type: payload.incident_type || 'unknown',\n    severity: payload.severity || 'low',\n    description: payload.description || '',\n    reported_at: payload.reported_at || new Date().toISOString(),\n    facility_id: payload.facility_id || null,\n    reporter_name: payload.reporter_name || 'System'\n  }\n}];"
+      },
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "Extract Incident Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  e.id AS equipment_id,\n  e.serial_number,\n  e.model_number,\n  e.equipment_type,\n  m.id AS manufacturer_id,\n  m.name AS manufacturer_name,\n  m.incident_contact_email,\n  m.incident_contact_name,\n  m.phone AS manufacturer_phone,\n  f.name AS facility_name,\n  f.address AS facility_address\nFROM zipsafe.equipment e\nJOIN zipsafe.manufacturers m ON m.id = e.manufacturer_id\nJOIN zipsafe.facilities f ON f.id = e.facility_id\nWHERE e.id = {{ $json.equipment_id }}",
+        "options": {}
+      },
+      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "name": "Lookup Equipment and Manufacturer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-1",
+              "leftValue": "={{ $json.manufacturer_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "d4e5f6a7-b8c9-0123-defa-234567890123",
+      "name": "Has Manufacturer Contact?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "toEmail": "={{ $('Lookup Equipment and Manufacturer').item.json.incident_contact_email }}",
+        "subject": "=[ZipSafe Incident Report] {{ $('Extract Incident Details').item.json.incident_type }} — Equipment {{ $('Lookup Equipment and Manufacturer').item.json.serial_number }}",
+        "emailType": "text",
+        "text": "=Dear {{ $('Lookup Equipment and Manufacturer').item.json.incident_contact_name }},\n\nThis is an automated notification from the ZipSafe platform regarding a safety incident involving equipment you manufactured.\n\n--- INCIDENT DETAILS ---\nIncident ID:     {{ $('Extract Incident Details').item.json.incident_id }}\nType:            {{ $('Extract Incident Details').item.json.incident_type }}\nSeverity:        {{ $('Extract Incident Details').item.json.severity }}\nReported At:     {{ $('Extract Incident Details').item.json.reported_at }}\nReported By:     {{ $('Extract Incident Details').item.json.reporter_name }}\n\n--- EQUIPMENT DETAILS ---\nManufacturer:    {{ $('Lookup Equipment and Manufacturer').item.json.manufacturer_name }}\nModel Number:    {{ $('Lookup Equipment and Manufacturer').item.json.model_number }}\nSerial Number:   {{ $('Lookup Equipment and Manufacturer').item.json.serial_number }}\nEquipment Type:  {{ $('Lookup Equipment and Manufacturer').item.json.equipment_type }}\n\n--- FACILITY ---\nFacility:        {{ $('Lookup Equipment and Manufacturer').item.json.facility_name }}\nAddress:         {{ $('Lookup Equipment and Manufacturer').item.json.facility_address }}\n\n--- DESCRIPTION ---\n{{ $('Extract Incident Details').item.json.description }}\n\nPer regulatory requirements, this notice is being issued within 48 hours of the reported incident. Please acknowledge receipt of this notification and provide your incident reference number at your earliest convenience.\n\nZipSafe Platform\nhttps://zipsafe.2h2.us",
+        "options": {}
+      },
+      "id": "e5f6a7b8-c9d0-1234-efab-345678901234",
+      "name": "Email Manufacturer",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO zipsafe.manufacturer_notifications (\n  incident_id,\n  manufacturer_id,\n  equipment_id,\n  recipient_email,\n  recipient_name,\n  delivery_status,\n  sent_at\n) VALUES (\n  {{ $('Extract Incident Details').item.json.incident_id }},\n  {{ $('Lookup Equipment and Manufacturer').item.json.manufacturer_id }},\n  {{ $('Extract Incident Details').item.json.equipment_id }},\n  '{{ $('Lookup Equipment and Manufacturer').item.json.incident_contact_email }}',\n  '{{ $('Lookup Equipment and Manufacturer').item.json.incident_contact_name }}',\n  'sent',\n  NOW()\n)\nRETURNING id",
+        "options": {}
+      },
+      "id": "f6a7b8c9-d0e1-2345-fabc-456789012345",
+      "name": "Record Notification Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO zipsafe.manufacturer_notifications (\n  incident_id,\n  manufacturer_id,\n  equipment_id,\n  recipient_email,\n  recipient_name,\n  delivery_status,\n  error_message,\n  sent_at\n) VALUES (\n  {{ $('Extract Incident Details').item.json.incident_id }},\n  NULL,\n  {{ $('Extract Incident Details').item.json.equipment_id }},\n  NULL,\n  NULL,\n  'failed',\n  'No manufacturer contact email found for equipment {{ $('Extract Incident Details').item.json.equipment_id }}',\n  NOW()\n)\nRETURNING id",
+        "options": {}
+      },
+      "id": "a7b8c9d0-e1f2-3456-abcd-567890123456",
+      "name": "Record Missing Contact",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 450]
+    }
+  ],
+  "connections": {
+    "MQTT: Incident Notification": {
+      "main": [
+        [{ "node": "Extract Incident Details", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Incident Details": {
+      "main": [
+        [{ "node": "Lookup Equipment and Manufacturer", "type": "main", "index": 0 }]
+      ]
+    },
+    "Lookup Equipment and Manufacturer": {
+      "main": [
+        [{ "node": "Has Manufacturer Contact?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Manufacturer Contact?": {
+      "main": [
+        [{ "node": "Email Manufacturer", "type": "main", "index": 0 }],
+        [{ "node": "Record Missing Contact", "type": "main", "index": 0 }]
+      ]
+    },
+    "Email Manufacturer": {
+      "main": [
+        [{ "node": "Record Notification Sent", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "zipsafe" }]
+}

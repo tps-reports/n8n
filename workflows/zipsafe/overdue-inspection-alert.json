@@ -1,0 +1,189 @@
+{
+  "name": "ZipSafe: Overdue Inspection Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "b1c2d3e4-f5a6-7890-bcde-f12345678901",
+      "name": "Schedule: Daily 6 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  s.id AS schedule_id,\n  s.next_due_date,\n  s.inspection_type,\n  s.assigned_inspector_id,\n  e.id AS equipment_id,\n  e.serial_number,\n  e.model_number,\n  e.equipment_type,\n  f.id AS facility_id,\n  f.name AS facility_name,\n  fa.email AS admin_email,\n  fa.full_name AS admin_name,\n  ins.email AS inspector_email,\n  ins.phone AS inspector_phone,\n  ins.full_name AS inspector_name,\n  (CURRENT_DATE - s.next_due_date) AS days_overdue\nFROM zipsafe.inspection_schedules s\nJOIN zipsafe.equipment e ON e.id = s.equipment_id\nJOIN zipsafe.facilities f ON f.id = e.facility_id\nJOIN zipsafe.facility_admins fa ON fa.facility_id = f.id AND fa.is_primary = TRUE\nLEFT JOIN zipsafe.users ins ON ins.id = s.assigned_inspector_id\nWHERE s.next_due_date < CURRENT_DATE\n  AND s.status = 'scheduled'\nORDER BY s.next_due_date ASC",
+        "options": {}
+      },
+      "id": "c2d3e4f5-a6b7-8901-cdef-234567890123",
+      "name": "Query Overdue Inspections",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-overdue",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "d3e4f5a6-b7c8-9012-defa-345678901234",
+      "name": "Any Overdue Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "toEmail": "={{ $json.admin_email }}",
+        "subject": "=[ZipSafe] Overdue Inspection: {{ $json.equipment_type }} {{ $json.serial_number }} — {{ $json.days_overdue }} days past due",
+        "emailType": "text",
+        "text": "=Dear {{ $json.admin_name }},\n\nThis is your daily overdue inspection alert from ZipSafe.\n\nThe following equipment inspection is overdue at {{ $json.facility_name }}:\n\n--- INSPECTION DETAILS ---\nSchedule ID:     {{ $json.schedule_id }}\nInspection Type: {{ $json.inspection_type }}\nDue Date:        {{ $json.next_due_date }}\nDays Overdue:    {{ $json.days_overdue }}\n\n--- EQUIPMENT ---\nType:            {{ $json.equipment_type }}\nModel:           {{ $json.model_number }}\nSerial Number:   {{ $json.serial_number }}\n\n--- ASSIGNED INSPECTOR ---\nName:            {{ $json.inspector_name || 'Unassigned' }}\nEmail:           {{ $json.inspector_email || 'N/A' }}\nPhone:           {{ $json.inspector_phone || 'N/A' }}\n\nPlease coordinate with your assigned inspector to complete this inspection immediately. Continued delays may result in compliance violations.\n\nLog in to ZipSafe to manage this inspection:\nhttps://zipsafe.2h2.us\n\nZipSafe Platform",
+        "options": {}
+      },
+      "id": "e4f5a6b7-c8d9-0123-efab-456789012345",
+      "name": "Email Facility Admin",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-inspector",
+              "leftValue": "={{ $json.inspector_phone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "f5a6b7c8-d9e0-1234-fabc-567890123456",
+      "name": "Inspector Has Phone?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "To",
+              "value": "={{ $json.inspector_phone }}"
+            },
+            {
+              "name": "From",
+              "value": "={{ $env.TWILIO_FROM_NUMBER }}"
+            },
+            {
+              "name": "Body",
+              "value": "=[ZipSafe] OVERDUE INSPECTION: {{ $json.inspection_type }} for {{ $json.equipment_type }} {{ $json.serial_number }} at {{ $json.facility_name }} is {{ $json.days_overdue }} days past due. Please schedule immediately: https://zipsafe.2h2.us"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a6b7c8d9-e0f1-2345-abcd-678901234567",
+      "name": "SMS Inspector",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 350]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE zipsafe.inspection_schedules\nSET\n  status = 'overdue',\n  updated_at = NOW()\nWHERE id = {{ $('Query Overdue Inspections').item.json.schedule_id }}\n  AND status = 'scheduled'\nRETURNING id, status",
+        "options": {}
+      },
+      "id": "b7c8d9e0-f1a2-3456-bcde-789012345678",
+      "name": "Mark Schedule Overdue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1500, 300]
+    }
+  ],
+  "connections": {
+    "Schedule: Daily 6 AM": {
+      "main": [
+        [{ "node": "Query Overdue Inspections", "type": "main", "index": 0 }]
+      ]
+    },
+    "Query Overdue Inspections": {
+      "main": [
+        [{ "node": "Any Overdue Items?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Any Overdue Items?": {
+      "main": [
+        [
+          { "node": "Email Facility Admin", "type": "main", "index": 0 },
+          { "node": "Inspector Has Phone?", "type": "main", "index": 0 }
+        ],
+        []
+      ]
+    },
+    "Email Facility Admin": {
+      "main": [
+        [{ "node": "Mark Schedule Overdue", "type": "main", "index": 0 }]
+      ]
+    },
+    "Inspector Has Phone?": {
+      "main": [
+        [{ "node": "SMS Inspector", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "SMS Inspector": {
+      "main": [
+        [{ "node": "Mark Schedule Overdue", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "zipsafe" }]
+}

@@ -1,0 +1,88 @@
+{
+  "name": "ZipSafe: Inspection Complete Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "topics": "zipsafe/inspection/complete",
+        "options": {}
+      },
+      "id": "d1e2f3a4-b5c6-7890-defa-123456789013",
+      "name": "MQTT: Inspection Complete",
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = typeof $input.item.json.body === 'string'\n  ? JSON.parse($input.item.json.body)\n  : $input.item.json;\n\nif (!payload.inspection_id) {\n  throw new Error('Missing required field: inspection_id');\n}\n\nconst passed = payload.result === 'pass' || payload.passed === true;\n\nreturn [{\n  json: {\n    inspection_id: payload.inspection_id,\n    equipment_id: payload.equipment_id,\n    facility_id: payload.facility_id,\n    result: payload.result || (passed ? 'pass' : 'fail'),\n    passed: passed,\n    result_label: passed ? 'PASSED' : 'FAILED',\n    inspector_id: payload.inspector_id || null,\n    inspector_name: payload.inspector_name || 'Unknown Inspector',\n    completed_at: payload.completed_at || new Date().toISOString(),\n    notes: payload.notes || '',\n    deficiencies: payload.deficiencies || [],\n    deficiency_count: (payload.deficiencies || []).length,\n    next_due_date: payload.next_due_date || null\n  }\n}];"
+      },
+      "id": "e2f3a4b5-c6d7-8901-efab-234567890134",
+      "name": "Extract Inspection Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  e.id AS equipment_id,\n  e.serial_number,\n  e.model_number,\n  e.equipment_type,\n  f.id AS facility_id,\n  f.name AS facility_name,\n  fa.email AS admin_email,\n  fa.full_name AS admin_name\nFROM zipsafe.equipment e\nJOIN zipsafe.facilities f ON f.id = e.facility_id\nJOIN zipsafe.facility_admins fa ON fa.facility_id = f.id AND fa.is_primary = TRUE\nWHERE e.id = {{ $json.equipment_id }}",
+        "options": {}
+      },
+      "id": "f3a4b5c6-d7e8-9012-fabc-345678901245",
+      "name": "Lookup Facility Admin",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inspection = $('Extract Inspection Results').item.json;\nconst facility = $input.item.json;\n\nlet deficiencySection = '';\nif (!inspection.passed && inspection.deficiency_count > 0) {\n  const list = (inspection.deficiencies || []).map((d, i) => `  ${i + 1}. ${d}`).join('\\n');\n  deficiencySection = `\\n--- DEFICIENCIES FOUND (${inspection.deficiency_count}) ---\\n${list}\\n`;\n}\n\nlet nextDueSection = '';\nif (inspection.next_due_date) {\n  nextDueSection = `\\nNext Scheduled Inspection: ${inspection.next_due_date}`;\n}\n\nconst body = `Dear ${facility.admin_name},\\n\\nAn inspection has been completed at ${facility.facility_name}. Below is the summary.\\n\\n--- INSPECTION RESULT: ${inspection.result_label} ---\\nInspection ID:   ${inspection.inspection_id}\\nCompleted At:    ${inspection.completed_at}\\nInspector:       ${inspection.inspector_name}\\n\\n--- EQUIPMENT ---\\nType:            ${facility.equipment_type}\\nModel:           ${facility.model_number}\\nSerial Number:   ${facility.serial_number}\\n${deficiencySection}${nextDueSection}\\n${inspection.notes ? `--- NOTES ---\\n${inspection.notes}\\n` : ''}\\n${!inspection.passed ? 'Action Required: This equipment has failed inspection. Please review the deficiencies above and coordinate corrective action before placing this equipment back in service.\\n' : ''}\\nView the full inspection report in ZipSafe:\\nhttps://zipsafe.2h2.us\\n\\nZipSafe Platform`;\n\nreturn [{\n  json: {\n    ...facility,\n    ...inspection,\n    email_body: body\n  }\n}];"
+      },
+      "id": "a4b5c6d7-e8f9-0123-abcd-456789012356",
+      "name": "Build Email Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "toEmail": "={{ $json.admin_email }}",
+        "subject": "=[ZipSafe] Inspection {{ $json.result_label }}: {{ $json.equipment_type }} {{ $json.serial_number }} at {{ $json.facility_name }}",
+        "emailType": "text",
+        "text": "={{ $json.email_body }}",
+        "options": {}
+      },
+      "id": "b5c6d7e8-f9a0-1234-bcde-567890123467",
+      "name": "Email Facility Admin",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "MQTT: Inspection Complete": {
+      "main": [
+        [{ "node": "Extract Inspection Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Inspection Results": {
+      "main": [
+        [{ "node": "Lookup Facility Admin", "type": "main", "index": 0 }]
+      ]
+    },
+    "Lookup Facility Admin": {
+      "main": [
+        [{ "node": "Build Email Body", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Email Body": {
+      "main": [
+        [{ "node": "Email Facility Admin", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "zipsafe" }]
+}
