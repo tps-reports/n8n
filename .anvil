@@ -1,0 +1,49 @@
+node:
+  name: n8n
+  type: n8n
+  category: service
+
+build:
+  image: docker.n8n.io/n8nio/n8n
+
+version:
+  source: image_tag
+
+# Service-level environment variables (merged into the generated compose).
+# n8n's image uses its own DB_POSTGRESDB_* naming and embedded defaults.
+env:
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: postgres
+  DB_POSTGRESDB_PORT: '"5432"'
+  DB_POSTGRESDB_DATABASE: ${DB_NAME:-fivex}${DB_SUFFIX:-_dev}
+  DB_POSTGRESDB_USER: ${DB_USER:-moqui}
+  DB_POSTGRESDB_PASSWORD: ${DB_PASSWORD:-moqui}
+  DB_POSTGRESDB_SCHEMA: n8n
+  N8N_PORT: '"5678"'
+  GENERIC_TIMEZONE: America/Chicago
+  WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+
+connections:
+  - target: postgres
+    type: database
+  - target: mod_java
+    type: api
+  - target: mod_node
+    type: api
+
+environments:
+  local:
+    mode: native
+    run_command: "pnpm dev"
+    port: 5678
+  dev:
+    port: 5678
+    mode: docker_image
+  stage:
+    port: 5678
+    mode: docker_image
+    cloud: gcp
+  prod:
+    port: 5678
+    mode: docker_image
+    cloud: gcp
