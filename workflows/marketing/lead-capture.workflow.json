@@ -1,0 +1,266 @@
+{
+  "name": "Agent Qualification Pipeline (D-1)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "q1a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5c",
+      "name": "Hourly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "endpoint": "/db/marketing.pipeline",
+        "queryParameters": {
+          "parameter": [
+            {
+              "name": "status",
+              "value": "new"
+            },
+            {
+              "name": "score",
+              "value": "null"
+            },
+            {
+              "name": "order_by",
+              "value": "created_at"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        }
+      },
+      "id": "q2b3c4d5-e6f7-4a8b-9c0d-1e2f3a4b5c6d",
+      "name": "FiveX List New Leads",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [500, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "You are a lead qualification specialist for Coyote Forge, scoring inbound leads for our AI-powered enterprise platform.\n\nLead data:\n- Name: {{ $json.first_name }} {{ $json.last_name }}\n- Email: {{ $json.email }}\n- Company: {{ $json.company }}\n- Role: {{ $json.role_title }}\n- Source: {{ $json.source }}\n- Notes: {{ $json.notes }}\n- Company size: {{ $json.company_size }}\n- Industry: {{ $json.industry }}\n\nScore this lead on a 0-100 scale based on:\n1. **Company Fit (0-30):** Enterprise/mid-market companies in tech, defense, government, maritime, or manufacturing score highest\n2. **Role Authority (0-25):** C-suite, VP, Director roles with budget authority score highest\n3. **Intent Signals (0-25):** Source quality (referral > event > inbound > cold), specificity of notes\n4. **Technical Fit (0-20):** Companies likely needing AI governance, dynamic data management, or real-time tracking\n\nRespond with JSON only:\n{\n  \"score\": <number 0-100>,\n  \"grade\": <\"A\" | \"B\" | \"C\" | \"D\">,\n  \"reasoning\": <1-2 sentence explanation>,\n  \"recommended_action\": <\"immediate_outreach\" | \"nurture_sequence\" | \"monitor\" | \"disqualify\">,\n  \"fit_breakdown\": { \"company\": <0-30>, \"role\": <0-25>, \"intent\": <0-25>, \"technical\": <0-20> }\n}",
+        "options": {}
+      },
+      "id": "q3c4d5e6-f7a8-4b9c-0d1e-2f3a4b5c6d7e",
+      "name": "AI Score Qualification",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "endpoint": "=/db/marketing.pipeline/{{ $('FiveX List New Leads').item.json.id }}",
+        "body": {
+          "score": "={{ JSON.parse($json.output).score }}",
+          "grade": "={{ JSON.parse($json.output).grade }}",
+          "qualification_reasoning": "={{ JSON.parse($json.output).reasoning }}",
+          "recommended_action": "={{ JSON.parse($json.output).recommended_action }}",
+          "fit_breakdown": "={{ JSON.stringify(JSON.parse($json.output).fit_breakdown) }}",
+          "scored_at": "={{ $now.toISO() }}",
+          "scored_by": "ai_agent",
+          "status": "scored"
+        }
+      },
+      "id": "q4d5e6f7-a8b9-4c0d-1e2f-3a4b5c6d7e8f",
+      "name": "FiveX Update Score",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-qualified",
+              "leftValue": "={{ JSON.parse($('AI Score Qualification').item.json.output).score }}",
+              "rightValue": "70",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "q5e6f7a8-b9c0-4d1e-2f3a-4b5c6d7e8f9a",
+      "name": "IF Qualified",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "httpMethod": "POST",
+        "webhookUri": "={{ $env.DISCORD_SALES_WEBHOOK }}",
+        "content": "=**Hot Lead Alert** :fire:\n\n**Name:** {{ $('FiveX List New Leads').item.json.first_name }} {{ $('FiveX List New Leads').item.json.last_name }}\n**Company:** {{ $('FiveX List New Leads').item.json.company }}\n**Role:** {{ $('FiveX List New Leads').item.json.role_title }}\n**Score:** {{ JSON.parse($('AI Score Qualification').item.json.output).score }}/100 (Grade: {{ JSON.parse($('AI Score Qualification').item.json.output).grade }})\n**Action:** {{ JSON.parse($('AI Score Qualification').item.json.output).recommended_action }}\n**Reasoning:** {{ JSON.parse($('AI Score Qualification').item.json.output).reasoning }}\n\nPipeline ID: `{{ $('FiveX List New Leads').item.json.id }}`"
+      },
+      "id": "q6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b",
+      "name": "Discord Hot Lead Alert",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [1500, 300],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "discordWebhookCred",
+          "name": "Discord Marketing Webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "topic": "marketing/lead/scored",
+        "sendInputData": false,
+        "message": "={{ JSON.stringify({ pipelineId: $('FiveX List New Leads').item.json.id, email: $('FiveX List New Leads').item.json.email, company: $('FiveX List New Leads').item.json.company, score: JSON.parse($('AI Score Qualification').item.json.output).score, grade: JSON.parse($('AI Score Qualification').item.json.output).grade, action: JSON.parse($('AI Score Qualification').item.json.output).recommended_action, qualified: true, timestamp: $now.toISO() }) }}"
+      },
+      "id": "q7a8b9c0-d1e2-4f3a-4b5c-6d7e8f9a0b1c",
+      "name": "MQTT Lead Scored",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [1750, 300],
+      "credentials": {
+        "mqtt": {
+          "id": "mqttCred",
+          "name": "Mosquitto MQTT"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Hourly Schedule": {
+      "main": [
+        [
+          {
+            "node": "FiveX List New Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FiveX List New Leads": {
+      "main": [
+        [
+          {
+            "node": "AI Score Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Score Qualification": {
+      "main": [
+        [
+          {
+            "node": "FiveX Update Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FiveX Update Score": {
+      "main": [
+        [
+          {
+            "node": "IF Qualified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Qualified": {
+      "main": [
+        [
+          {
+            "node": "Discord Hot Lead Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "MQTT Lead Scored",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord Hot Lead Alert": {
+      "main": [
+        [
+          {
+            "node": "MQTT Lead Scored",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "marketing",
+      "id": "tag-marketing"
+    },
+    {
+      "name": "sales",
+      "id": "tag-sales"
+    },
+    {
+      "name": "ai-agent",
+      "id": "tag-ai-agent"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-28T00:00:00.000Z",
+  "versionId": "1",
+  "meta": {
+    "instanceId": "fivex-marketing",
+    "templateCredsSetupCompleted": false
+  }
+}

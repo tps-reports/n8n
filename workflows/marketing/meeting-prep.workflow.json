@@ -1,0 +1,318 @@
+{
+  "name": "Meeting Prep Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "name": "Daily 8 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary"
+        },
+        "returnAll": false,
+        "limit": 50,
+        "options": {
+          "timeMin": "={{ $now.startOf('day').toISO() }}",
+          "timeMax": "={{ $now.endOf('day').toISO() }}",
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+      "name": "Get Today's Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.1,
+      "position": [500, 300],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "googleCalendarCred",
+          "name": "Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-external-attendees",
+              "leftValue": "={{ $json.attendees?.filter(a => !a.email?.endsWith('@coyoteforge.com')).length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f",
+      "name": "Has External Attendees",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "endpoint": "/db/organization",
+        "queryParameters": {
+          "parameter": [
+            {
+              "name": "domain",
+              "value": "={{ $json.attendees.filter(a => !a.email?.endsWith('@coyoteforge.com'))[0]?.email?.split('@')[1] }}"
+            }
+          ]
+        }
+      },
+      "id": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80",
+      "name": "Query Organization",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "You are a prospect research analyst preparing a meeting briefing for Michael at Coyote Forge.\n\nOrganization data from CRM:\n{{ JSON.stringify($json) }}\n\nEvent details:\n- Title: {{ $('Get Today\\'s Events').item.json.summary }}\n- Time: {{ $('Get Today\\'s Events').item.json.start?.dateTime }}\n- Attendees: {{ $('Get Today\\'s Events').item.json.attendees?.map(a => a.email).join(', ') }}\n\nGenerate a concise 1-page meeting prep briefing with these sections:\n1. **Company Overview** - what they do, size, industry\n2. **Key People** - attendees and their likely roles\n3. **Strategic Context** - recent news, growth signals, pain points\n4. **Conversation Hooks** - 3-4 talking points tailored to their needs\n5. **Coyote Forge Positioning** - how our platform addresses their likely challenges\n6. **Questions to Ask** - 3-5 discovery questions\n\nFormat as clean markdown suitable for a Google Doc.",
+        "options": {}
+      },
+      "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8091",
+      "name": "Research & Brief",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "title": "=Meeting Prep: {{ $('Get Today\\'s Events').item.json.summary }} - {{ $now.format('yyyy-MM-dd') }}",
+        "content": "={{ $json.output }}",
+        "folderId": ""
+      },
+      "id": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f809102",
+      "name": "Create Briefing Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 1,
+      "position": [1500, 300],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "googleDocsCred",
+          "name": "Google Docs"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "michael@coyoteforge.com",
+        "subject": "=Meeting Prep: {{ $('Get Today\\'s Events').item.json.summary }}",
+        "emailType": "html",
+        "message": "=<h2>Meeting Prep Ready</h2>\n<p><strong>Meeting:</strong> {{ $('Get Today\\'s Events').item.json.summary }}</p>\n<p><strong>Time:</strong> {{ $('Get Today\\'s Events').item.json.start?.dateTime }}</p>\n<p><strong>Briefing Doc:</strong> <a href=\"{{ $json.webViewLink }}\">Open in Google Docs</a></p>\n<hr>\n<p>{{ $('Research & Brief').item.json.output?.substring(0, 500) }}...</p>\n<p><em>Full briefing in the linked document.</em></p>",
+        "options": {}
+      },
+      "id": "a7b8c9d0-e1f2-4a3b-4c5d-6e7f80910213",
+      "name": "Send Briefing Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1750, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmailCred",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "endpoint": "/db/marketing.tasks",
+        "body": {
+          "task_type": "meeting_prep",
+          "status": "completed",
+          "party_id": "={{ $('Query Organization').item.json.id }}",
+          "description": "=Meeting prep briefing generated for {{ $('Get Today\\'s Events').item.json.summary }}",
+          "metadata": "={{ JSON.stringify({ doc_url: $('Create Briefing Doc').item.json.webViewLink, meeting_time: $('Get Today\\'s Events').item.json.start?.dateTime, attendees: $('Get Today\\'s Events').item.json.attendees?.map(a => a.email) }) }}",
+          "completed_at": "={{ $now.toISO() }}"
+        }
+      },
+      "id": "b8c9d0e1-f2a3-4b4c-5d6e-7f8091021324",
+      "name": "Log Activity",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [2000, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "topic": "marketing/meeting/prep",
+        "sendInputData": false,
+        "message": "={{ JSON.stringify({ partyId: $('Query Organization').item.json.id, docUrl: $('Create Briefing Doc').item.json.webViewLink, meeting: $('Get Today\\'s Events').item.json.summary, timestamp: $now.toISO() }) }}"
+      },
+      "id": "c9d0e1f2-a3b4-4c5d-6e7f-809102132435",
+      "name": "Publish MQTT",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [2250, 300],
+      "credentials": {
+        "mqtt": {
+          "id": "mqttCred",
+          "name": "Mosquitto MQTT"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 8 AM": {
+      "main": [
+        [
+          {
+            "node": "Get Today's Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today's Events": {
+      "main": [
+        [
+          {
+            "node": "Has External Attendees",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has External Attendees": {
+      "main": [
+        [
+          {
+            "node": "Query Organization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Organization": {
+      "main": [
+        [
+          {
+            "node": "Research & Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research & Brief": {
+      "main": [
+        [
+          {
+            "node": "Create Briefing Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Briefing Doc": {
+      "main": [
+        [
+          {
+            "node": "Send Briefing Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Briefing Email": {
+      "main": [
+        [
+          {
+            "node": "Log Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Activity": {
+      "main": [
+        [
+          {
+            "node": "Publish MQTT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "marketing",
+      "id": "tag-marketing"
+    },
+    {
+      "name": "crm",
+      "id": "tag-crm"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-28T00:00:00.000Z",
+  "versionId": "1",
+  "meta": {
+    "instanceId": "fivex-marketing",
+    "templateCredsSetupCompleted": false
+  }
+}

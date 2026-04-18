@@ -1,0 +1,308 @@
+{
+  "name": "Post-Call Follow-up",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Post-Call Follow-up",
+        "formDescription": "Enter contact details and meeting notes to generate a follow-up sequence.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Contact Party ID",
+              "fieldType": "text",
+              "requiredField": true,
+              "placeholder": "e.g. 142"
+            },
+            {
+              "fieldLabel": "Meeting Notes",
+              "fieldType": "textarea",
+              "requiredField": true,
+              "placeholder": "Paste your meeting notes here..."
+            }
+          ]
+        }
+      },
+      "id": "1a2b3c4d-5e6f-4a7b-8c9d-e0f1a2b3c4d5",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "endpoint": "=/db/person/{{ $json['Contact Party ID'] }}"
+      },
+      "id": "2b3c4d5e-6f7a-4b8c-9d0e-f1a2b3c4d5e6",
+      "name": "Get Contact Details",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [500, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "endpoint": "/db/marketing.pipeline",
+        "queryParameters": {
+          "parameter": [
+            {
+              "name": "party_id",
+              "value": "={{ $('Manual Trigger').item.json['Contact Party ID'] }}"
+            }
+          ]
+        }
+      },
+      "id": "3c4d5e6f-7a8b-4c9d-0e1f-a2b3c4d5e6f7",
+      "name": "Get Pipeline Context",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [750, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "You are an account executive assistant at Coyote Forge, helping with post-meeting follow-up.\n\nContact information:\n- Name: {{ $('Get Contact Details').item.json.first_name }} {{ $('Get Contact Details').item.json.last_name }}\n- Email: {{ $('Get Contact Details').item.json.email }}\n- Organization: {{ $('Get Contact Details').item.json.organization_name }}\n\nPipeline context:\n- Current Stage: {{ $('Get Pipeline Context').item.json.stage }}\n- Deal Value: {{ $('Get Pipeline Context').item.json.deal_value }}\n- Created: {{ $('Get Pipeline Context').item.json.created_at }}\n\nMeeting Notes:\n{{ $('Manual Trigger').item.json['Meeting Notes'] }}\n\nGenerate two outputs in valid JSON format:\n{\n  \"recap_email\": {\n    \"subject\": \"string - professional follow-up subject line\",\n    \"body\": \"string - HTML email with: meeting summary, key discussion points, agreed next steps, timeline, and CTA\"\n  },\n  \"recommendations\": {\n    \"next_stage\": \"string - recommended pipeline stage (one of: lead, meeting, proposal, negotiation, won, lost)\",\n    \"next_steps\": [\"string array of recommended follow-up actions\"],\n    \"deal_notes\": \"string - key insights: budget, timeline, decision makers, objections\",\n    \"follow_up_days\": \"number - days until next touchpoint\"\n  }\n}",
+        "options": {
+          "systemMessage": "Always respond with valid JSON matching the requested schema. No markdown code fences."
+        }
+      },
+      "id": "4d5e6f7a-8b9c-4d0e-1f2a-b3c4d5e6f7a8",
+      "name": "Generate Recap & Recommendations",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "endpoint": "=/db/marketing.pipeline/{{ $('Get Pipeline Context').item.json.id }}",
+        "body": {
+          "stage": "={{ JSON.parse($json.output).recommendations.next_stage }}",
+          "notes": "={{ JSON.parse($json.output).recommendations.deal_notes }}",
+          "next_step": "={{ JSON.parse($json.output).recommendations.next_steps?.[0] }}",
+          "updated_at": "={{ $now.toISO() }}"
+        }
+      },
+      "id": "5e6f7a8b-9c0d-4e1f-2a3b-c4d5e6f7a8b9",
+      "name": "Update Pipeline Stage",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [1250, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "endpoint": "/db/marketing.tasks",
+        "body": {
+          "task_type": "follow_up",
+          "status": "pending",
+          "party_id": "={{ $('Manual Trigger').item.json['Contact Party ID'] }}",
+          "description": "={{ JSON.parse($('Generate Recap & Recommendations').item.json.output).recommendations.next_steps?.[0] }}",
+          "due_date": "={{ $now.plus({ days: JSON.parse($('Generate Recap & Recommendations').item.json.output).recommendations.follow_up_days || 7 }).toISO() }}",
+          "metadata": "={{ JSON.stringify({ pipeline_id: $('Get Pipeline Context').item.json.id, all_next_steps: JSON.parse($('Generate Recap & Recommendations').item.json.output).recommendations.next_steps }) }}"
+        }
+      },
+      "id": "6f7a8b9c-0d1e-4f2a-3b4c-d5e6f7a8b9c0",
+      "name": "Create Follow-up Task",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [1500, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Get Contact Details').item.json.email }}",
+        "subject": "={{ JSON.parse($('Generate Recap & Recommendations').item.json.output).recap_email.subject }}",
+        "emailType": "html",
+        "message": "={{ JSON.parse($('Generate Recap & Recommendations').item.json.output).recap_email.body }}",
+        "options": {
+          "ccList": "michael@coyoteforge.com",
+          "replyTo": "michael@coyoteforge.com"
+        }
+      },
+      "id": "7a8b9c0d-1e2f-4a3b-4c5d-e6f7a8b9c0d1",
+      "name": "Send Follow-up Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1750, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmailCred",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=**Post-Call Update**\n\n**Contact:** {{ $('Get Contact Details').item.json.first_name }} {{ $('Get Contact Details').item.json.last_name }} ({{ $('Get Contact Details').item.json.organization_name }})\n**Stage:** {{ $('Get Pipeline Context').item.json.stage }} -> {{ JSON.parse($('Generate Recap & Recommendations').item.json.output).recommendations.next_stage }}\n**Next Step:** {{ JSON.parse($('Generate Recap & Recommendations').item.json.output).recommendations.next_steps?.[0] }}\n**Follow-up:** {{ JSON.parse($('Generate Recap & Recommendations').item.json.output).recommendations.follow_up_days }} days",
+        "options": {}
+      },
+      "id": "8b9c0d1e-2f3a-4b4c-5d6e-f7a8b9c0d1e2",
+      "name": "Post to Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [2000, 300],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "discordCred",
+          "name": "Discord Webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "topic": "=marketing/pipeline/{{ JSON.parse($('Generate Recap & Recommendations').item.json.output).recommendations.next_stage }}",
+        "sendInputData": false,
+        "message": "={{ JSON.stringify({ pipelineId: $('Get Pipeline Context').item.json.id, partyId: $('Manual Trigger').item.json['Contact Party ID'], newStage: JSON.parse($('Generate Recap & Recommendations').item.json.output).recommendations.next_stage, previousStage: $('Get Pipeline Context').item.json.stage, contact: $('Get Contact Details').item.json.first_name + ' ' + $('Get Contact Details').item.json.last_name, organization: $('Get Contact Details').item.json.organization_name, timestamp: $now.toISO() }) }}"
+      },
+      "id": "9c0d1e2f-3a4b-4c5d-6e7f-a8b9c0d1e2f3",
+      "name": "Publish MQTT",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [2250, 300],
+      "credentials": {
+        "mqtt": {
+          "id": "mqttCred",
+          "name": "Mosquitto MQTT"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Contact Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact Details": {
+      "main": [
+        [
+          {
+            "node": "Get Pipeline Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pipeline Context": {
+      "main": [
+        [
+          {
+            "node": "Generate Recap & Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Recap & Recommendations": {
+      "main": [
+        [
+          {
+            "node": "Update Pipeline Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Pipeline Stage": {
+      "main": [
+        [
+          {
+            "node": "Create Follow-up Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Follow-up Task": {
+      "main": [
+        [
+          {
+            "node": "Send Follow-up Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Follow-up Email": {
+      "main": [
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Discord": {
+      "main": [
+        [
+          {
+            "node": "Publish MQTT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "marketing",
+      "id": "tag-marketing"
+    },
+    {
+      "name": "crm",
+      "id": "tag-crm"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-28T00:00:00.000Z",
+  "versionId": "1",
+  "meta": {
+    "instanceId": "fivex-marketing",
+    "templateCredsSetupCompleted": false
+  }
+}

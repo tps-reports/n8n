@@ -1,0 +1,102 @@
+{
+  "name": "Marketing — Weekly Report Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "trigger-weekly",
+      "name": "Weekly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.MOD_JAVA_URL }}/db/marketing.campaigns",
+        "qs": {
+          "filter": "status:eq:published",
+          "sort": "-published_at",
+          "limit": "50"
+        },
+        "authentication": "headerAuth"
+      },
+      "id": "fetch-campaigns",
+      "name": "Fetch published campaigns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.MOD_JAVA_URL }}/db/marketing.pipeline",
+        "qs": {
+          "filter": "created_at:gte:{{ $now.minus({ weeks: 1 }).toISO() }}",
+          "limit": "500"
+        },
+        "authentication": "headerAuth"
+      },
+      "id": "fetch-pipeline",
+      "name": "Fetch new leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "functionCode": "// TODO: aggregate metrics from campaigns + pipeline\n// Output: { campaigns_published, leads_added, pipeline_value, top_performers }\nreturn items;"
+      },
+      "id": "aggregate",
+      "name": "Aggregate metrics",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "topic": "marketing/tasks/report/weekly",
+        "message": "={{ JSON.stringify($json) }}"
+      },
+      "id": "publish-mqtt",
+      "name": "Publish weekly report",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Weekly Schedule": {
+      "main": [
+        [{ "node": "Fetch published campaigns", "type": "main", "index": 0 }],
+        [{ "node": "Fetch new leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch published campaigns": {
+      "main": [[{ "node": "Aggregate metrics", "type": "main", "index": 0 }]]
+    },
+    "Fetch new leads": {
+      "main": [[{ "node": "Aggregate metrics", "type": "main", "index": 0 }]]
+    },
+    "Aggregate metrics": {
+      "main": [[{ "node": "Publish weekly report", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "skeleton-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "skeleton": true,
+    "authoredAt": "2026-04-11",
+    "authoredBy": "marketing-audit-p2-7",
+    "purpose": "Weekly marketing performance report — aggregate published campaigns, new pipeline leads, and engagement metrics into a summary published to marketing/tasks/report/weekly. The CSO agent (#01 in the council) consumes this for weekly executive summaries."
+  },
+  "tags": ["marketing", "audit-p2-7", "skeleton"]
+}

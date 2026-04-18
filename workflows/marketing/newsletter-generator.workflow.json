@@ -1,0 +1,219 @@
+{
+  "name": "Newsletter Generator (A-3)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 5"
+            }
+          ]
+        }
+      },
+      "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "name": "Cron Fri 10 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.youtube.com/feeds/videos.xml?channel_id={{ $env.YOUTUBE_CHANNEL_ID }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+      "name": "Fetch YouTube RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse YouTube RSS XML feed and extract recent videos\nconst xml = $input.first().json.data;\n\nconst entries = [];\nconst entryRegex = /<entry>([\\s\\S]*?)<\\/entry>/g;\nlet match;\n\nwhile ((match = entryRegex.exec(xml)) !== null) {\n  const entry = match[1];\n  const title = entry.match(/<title>([\\s\\S]*?)<\\/title>/)?.[1] || '';\n  const videoId = entry.match(/<yt:videoId>([\\s\\S]*?)<\\/yt:videoId>/)?.[1] || '';\n  const published = entry.match(/<published>([\\s\\S]*?)<\\/published>/)?.[1] || '';\n  const description = entry.match(/<media:description>([\\s\\S]*?)<\\/media:description>/)?.[1] || '';\n  const thumbnail = entry.match(/<media:thumbnail url=\"(.*?)\"/)?.[1] || '';\n\n  entries.push({\n    title,\n    videoId,\n    url: 'https://www.youtube.com/watch?v=' + videoId,\n    published,\n    description: description.substring(0, 300),\n    thumbnail\n  });\n}\n\nconst oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);\nconst recentEntries = entries.filter(e => new Date(e.published) > oneWeekAgo);\n\nreturn [{\n  json: {\n    videos: recentEntries,\n    videoCount: recentEntries.length,\n    weekOf: new Date().toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "3c4d5e6f-7a8b-4c9d-0e1f-2a3b4c5d6e7f",
+      "name": "Parse Feed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "You are a newsletter writer for Coyote Forge, a technology company building AI-powered enterprise platforms.\n\nThis week's YouTube content:\n{{ JSON.stringify($json.videos, null, 2) }}\n\nGenerate a weekly newsletter with these sections:\n\n1. **Hero Section** - Engaging headline and 2-sentence intro for the week\n2. **This Week's Videos** - For each video, write a compelling 2-3 sentence summary with the video link\n3. **Key Takeaways** - 3-4 bullet points summarizing the main themes across all videos\n4. **Community Spotlight** - A brief call-to-action encouraging viewers to join Discord and share feedback\n5. **Coming Next Week** - Teaser for upcoming content\n\nTone: Professional but approachable. Technical but accessible. Use the Coyote Forge brand voice.\nFormat: HTML suitable for an email newsletter. Use inline styles for compatibility.",
+        "options": {}
+      },
+      "id": "4d5e6f7a-8b9c-4d0e-1f2a-3b4c5d6e7f80",
+      "name": "AI Generate Newsletter",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "resource": "post",
+        "title": "=Coyote Forge Weekly - {{ $('Parse Feed').item.json.weekOf }}",
+        "content": "={{ $json.output }}",
+        "status": "draft",
+        "additionalFields": {
+          "subtitle": "=This week: {{ $('Parse Feed').item.json.videoCount }} new videos and updates from the forge"
+        }
+      },
+      "id": "5e6f7a8b-9c0d-4e1f-2a3b-4c5d6e7f8091",
+      "name": "Beehiiv Create Post",
+      "type": "n8n-nodes-beehiiv.beehiiv",
+      "typeVersion": 1,
+      "position": [1250, 300],
+      "credentials": {
+        "beehiivApi": {
+          "id": "beehiivApiCred",
+          "name": "Beehiiv API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "httpMethod": "POST",
+        "webhookUri": "={{ $env.DISCORD_MARKETING_WEBHOOK }}",
+        "content": "=**Newsletter Draft Ready**\n\n**Week of:** {{ $('Parse Feed').item.json.weekOf }}\n**Videos covered:** {{ $('Parse Feed').item.json.videoCount }}\n**Beehiiv post ID:** `{{ $json.id }}`\n\nReview and publish at: https://app.beehiiv.com/posts"
+      },
+      "id": "6f7a8b9c-0d1e-4f2a-3b4c-5d6e7f809102",
+      "name": "Discord Notification",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [1500, 300],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "discordWebhookCred",
+          "name": "Discord Marketing Webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "endpoint": "/db/marketing.tasks",
+        "body": {
+          "task_type": "newsletter_generation",
+          "status": "completed",
+          "description": "=Weekly newsletter generated for {{ $('Parse Feed').item.json.weekOf }} with {{ $('Parse Feed').item.json.videoCount }} videos",
+          "metadata": "={{ JSON.stringify({ beehiiv_post_id: $('Beehiiv Create Post').item.json.id, video_count: $('Parse Feed').item.json.videoCount, week_of: $('Parse Feed').item.json.weekOf }) }}",
+          "completed_at": "={{ $now.toISO() }}"
+        }
+      },
+      "id": "7a8b9c0d-1e2f-4a3b-4c5d-6e7f80910213",
+      "name": "FiveX Log Activity",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [1750, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron Fri 10 AM": {
+      "main": [
+        [
+          {
+            "node": "Fetch YouTube RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch YouTube RSS": {
+      "main": [
+        [
+          {
+            "node": "Parse Feed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Feed": {
+      "main": [
+        [
+          {
+            "node": "AI Generate Newsletter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Generate Newsletter": {
+      "main": [
+        [
+          {
+            "node": "Beehiiv Create Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Beehiiv Create Post": {
+      "main": [
+        [
+          {
+            "node": "Discord Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord Notification": {
+      "main": [
+        [
+          {
+            "node": "FiveX Log Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "marketing",
+      "id": "tag-marketing"
+    },
+    {
+      "name": "newsletter",
+      "id": "tag-newsletter"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-28T00:00:00.000Z",
+  "versionId": "1",
+  "meta": {
+    "instanceId": "fivex-marketing",
+    "templateCredsSetupCompleted": false
+  }
+}

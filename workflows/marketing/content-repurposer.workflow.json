@@ -1,0 +1,189 @@
+{
+  "name": "Agent Content Pipeline (D-1)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "id": "d1a2b3c4-e5f6-4a7b-8c9d-1e2f3a4b5c6d",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "endpoint": "/db/marketing.content_tasks",
+        "queryParameters": {
+          "parameter": [
+            {
+              "name": "status",
+              "value": "pending"
+            },
+            {
+              "name": "order_by",
+              "value": "priority,scheduled_date"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            }
+          ]
+        }
+      },
+      "id": "d2b3c4d5-f6a7-4b8c-9d0e-2f3a4b5c6d7e",
+      "name": "FiveX List Pending Tasks",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [500, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "You are a content strategist and writer for Coyote Forge, a technology company building the FiveX AI-powered enterprise platform.\n\nContent task details:\n- Type: {{ $json.content_type }}\n- Topic: {{ $json.topic }}\n- Target audience: {{ $json.target_audience }}\n- Platform: {{ $json.platform }}\n- Key messages: {{ $json.key_messages }}\n- Tone: {{ $json.tone || 'Professional, technical but accessible' }}\n- Word count target: {{ $json.word_count || 500 }}\n\nBrand context:\n- Coyote Forge builds AI-powered enterprise platforms\n- Key products: FiveX Platform, Sovereign Framework (Constitutional AI), Dynamic Data Store\n- Differentiator: Democratic AI governance with human-AI council deliberation\n- Voice: Authoritative but approachable, innovator mindset, community-driven\n\nGenerate the content piece. Include:\n1. A compelling headline/title\n2. The full content body\n3. A meta description (160 chars max)\n4. 5 relevant hashtags\n5. A suggested call-to-action\n\nFormat the output as JSON with keys: title, body, meta_description, hashtags, cta",
+        "options": {}
+      },
+      "id": "d3c4d5e6-a7b8-4c9d-0e1f-3a4b5c6d7e8f",
+      "name": "AI Generate Content",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "endpoint": "/db/marketing.content_calendar",
+        "body": {
+          "task_id": "={{ $('FiveX List Pending Tasks').item.json.id }}",
+          "title": "={{ JSON.parse($json.output).title }}",
+          "body": "={{ JSON.parse($json.output).body }}",
+          "meta_description": "={{ JSON.parse($json.output).meta_description }}",
+          "hashtags": "={{ JSON.parse($json.output).hashtags }}",
+          "cta": "={{ JSON.parse($json.output).cta }}",
+          "content_type": "={{ $('FiveX List Pending Tasks').item.json.content_type }}",
+          "platform": "={{ $('FiveX List Pending Tasks').item.json.platform }}",
+          "status": "draft",
+          "generated_by": "ai_agent",
+          "generated_at": "={{ $now.toISO() }}"
+        }
+      },
+      "id": "d4d5e6f7-b8c9-4d0e-1f2a-4b5c6d7e8f9a",
+      "name": "FiveX Create Calendar Entry",
+      "type": "n8n-nodes-fivex.fiveX",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "credentials": {
+        "fiveXApi": {
+          "id": "fiveXApiCred",
+          "name": "FiveX API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "topic": "marketing/content/new",
+        "sendInputData": false,
+        "message": "={{ JSON.stringify({ calendarEntryId: $json.id, taskId: $('FiveX List Pending Tasks').item.json.id, contentType: $('FiveX List Pending Tasks').item.json.content_type, platform: $('FiveX List Pending Tasks').item.json.platform, title: JSON.parse($('AI Generate Content').item.json.output).title, generatedAt: $now.toISO() }) }}"
+      },
+      "id": "d5e6f7a8-c9d0-4e1f-2a3b-5c6d7e8f9a0b",
+      "name": "MQTT Content New",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [1250, 300],
+      "credentials": {
+        "mqtt": {
+          "id": "mqttCred",
+          "name": "Mosquitto MQTT"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Schedule": {
+      "main": [
+        [
+          {
+            "node": "FiveX List Pending Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FiveX List Pending Tasks": {
+      "main": [
+        [
+          {
+            "node": "AI Generate Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Generate Content": {
+      "main": [
+        [
+          {
+            "node": "FiveX Create Calendar Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FiveX Create Calendar Entry": {
+      "main": [
+        [
+          {
+            "node": "MQTT Content New",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "marketing",
+      "id": "tag-marketing"
+    },
+    {
+      "name": "content",
+      "id": "tag-content"
+    },
+    {
+      "name": "ai-agent",
+      "id": "tag-ai-agent"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-28T00:00:00.000Z",
+  "versionId": "1",
+  "meta": {
+    "instanceId": "fivex-marketing",
+    "templateCredsSetupCompleted": false
+  }
+}

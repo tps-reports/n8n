@@ -1,0 +1,77 @@
+{
+  "name": "Marketing — Competitive Scan",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "trigger-weekly",
+      "name": "Weekly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.competitor_urls }}",
+        "options": {}
+      },
+      "id": "scrape-competitor",
+      "name": "Scrape competitor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "notes": "Placeholder — authored 2026-04-11 as part of the marketing audit P2-7 deployment. The real workflow needs: (1) a list of competitor URLs loaded from marketing.brand_profiles.competitor_urls, (2) HTML scraping with an anti-bot-aware proxy, (3) diff detection against last week's snapshot, (4) publish a summary to marketing/tasks/competitive-scan/report via MQTT, (5) optional Slack notification on material changes. See mod_java MarketingRouteBuilder for the MQTT topic convention."
+    },
+    {
+      "parameters": {
+        "functionCode": "// TODO: implement diff detection + summary generation\n// Input: raw HTML from competitor URLs\n// Output: JSON summary of material changes since last run\nreturn items;"
+      },
+      "id": "generate-summary",
+      "name": "Generate summary",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "topic": "marketing/tasks/competitive-scan/report",
+        "message": "={{ JSON.stringify($json) }}"
+      },
+      "id": "publish-mqtt",
+      "name": "Publish to MQTT",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Weekly Schedule": {
+      "main": [[{ "node": "Scrape competitor", "type": "main", "index": 0 }]]
+    },
+    "Scrape competitor": {
+      "main": [[{ "node": "Generate summary", "type": "main", "index": 0 }]]
+    },
+    "Generate summary": {
+      "main": [[{ "node": "Publish to MQTT", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "skeleton-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "skeleton": true,
+    "authoredAt": "2026-04-11",
+    "authoredBy": "marketing-audit-p2-7",
+    "purpose": "Weekly competitor monitoring — scrape tracked URLs, diff against last week, publish material changes to marketing/tasks/competitive-scan/report for the marketing council to review."
+  },
+  "tags": ["marketing", "audit-p2-7", "skeleton"]
+}

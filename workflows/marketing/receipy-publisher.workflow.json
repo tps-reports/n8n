@@ -1,0 +1,166 @@
+{
+  "name": "Receipy Publisher (A-2)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 9 * * 2"
+            }
+          ]
+        }
+      },
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "name": "Cron Tue 9:30 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check content queue for items marked as ready to publish\nconst now = new Date().toISOString();\nconst items = $input.all();\n\n// Query the content queue via FiveX API\nconst queueResponse = await fetch(\n  `${$env.FIVEX_API_URL || 'http://localhost:8080'}/db/marketing.content_queue?status=ready&order_by=scheduled_at&limit=10`,\n  {\n    headers: {\n      'Authorization': `Bearer ${$env.FIVEX_API_TOKEN}`,\n      'Content-Type': 'application/json'\n    }\n  }\n);\n\nconst queue = await queueResponse.json();\nconst readyItems = Array.isArray(queue) ? queue : (queue.data || []);\n\nreturn readyItems.map(item => ({\n  json: {\n    id: item.id,\n    title: item.title,\n    content: item.content,\n    platform: item.platform,\n    scheduled_at: item.scheduled_at,\n    author: item.author,\n    ready: readyItems.length > 0,\n    checked_at: now\n  }\n}));"
+      },
+      "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "name": "Check Content Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-content-ready",
+              "leftValue": "={{ $json.ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+      "name": "IF Ready",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "httpMethod": "POST",
+        "webhookUri": "={{ $env.DISCORD_MARKETING_WEBHOOK }}",
+        "content": "=**Publishing Content** :rocket:\n\n**Title:** {{ $json.title }}\n**Platform:** {{ $json.platform }}\n**Author:** {{ $json.author }}\n**Scheduled:** {{ $json.scheduled_at }}\n\nContent ID: `{{ $json.id }}`"
+      },
+      "id": "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
+      "name": "Discord Publishing Alert",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [1000, 300],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "discordWebhookCred",
+          "name": "Discord Marketing Webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "topic": "marketing/content/published",
+        "sendInputData": false,
+        "message": "={{ JSON.stringify({ contentId: $json.id, title: $json.title, platform: $json.platform, author: $json.author, publishedAt: new Date().toISOString() }) }}"
+      },
+      "id": "6ba7b813-9dad-11d1-80b4-00c04fd430c8",
+      "name": "Publish MQTT",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [1250, 300],
+      "credentials": {
+        "mqtt": {
+          "id": "mqttCred",
+          "name": "Mosquitto MQTT"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron Tue 9:30 AM": {
+      "main": [
+        [
+          {
+            "node": "Check Content Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Content Queue": {
+      "main": [
+        [
+          {
+            "node": "IF Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Ready": {
+      "main": [
+        [
+          {
+            "node": "Discord Publishing Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord Publishing Alert": {
+      "main": [
+        [
+          {
+            "node": "Publish MQTT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "marketing",
+      "id": "tag-marketing"
+    },
+    {
+      "name": "content",
+      "id": "tag-content"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-28T00:00:00.000Z",
+  "versionId": "1",
+  "meta": {
+    "instanceId": "fivex-marketing",
+    "templateCredsSetupCompleted": false
+  }
+}
