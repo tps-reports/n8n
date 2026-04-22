@@ -5,6 +5,9 @@ node:
 
 build:
   image: docker.n8n.io/n8nio/n8n
+  volumes:
+    - name: n8n-data
+      target: /home/node/.n8n
 
 version:
   source: image_tag
